@@ -49,10 +49,14 @@ int main(int argc, char **argv)
   MPI_Bcast(&misalign,1,MPI_INT,0,MPI_COMM_WORLD);
   size_t bytes = size_t(n)*sizeof(long);
   if (rank == 0) {
-    if (mem == 'd') printf("Using hipMalloc");
-    else if (mem == 'h') printf("Using hipHostMalloc");
-    else printf("Using malloc");
-    printf(" with %d longs, %lu bytes misaligned by %lu, %d pairs\n",n,bytes,misalign*sizeof(long),half);
+    printf("# %s: strided parallel pairs of MPI ping-pong partners\n",argv[0]);
+    printf("# allocator: ");
+    if (mem == 'd') printf("hipMalloc\n");
+    else if (mem == 'h') printf("hipHostMalloc\n");
+    else printf("malloc\n");
+    printf("# pairs: %d\n",half);
+    printf("# total count: %d bytes: %lu\n",n,bytes);
+    if (misalign) printf("# misaligned by %lu bytes\n",misalign*sizeof(long));
     fflush(stdout);
   }
 
@@ -93,6 +97,7 @@ int main(int argc, char **argv)
   const int tag = 1;
   const double gb = double(1024)*double(1024)*double(1024);
   const double timeout = 1;
+  if (rank == 0) printf("# timeout: %gs\n",timeout);
 
   MPI_Request req;
 
@@ -104,7 +109,8 @@ int main(int argc, char **argv)
     assert(partner < size);
     assert(partner != rank);
     if (rank == 0) {
-      printf("\nWarmup for %d pairs of stride %d...\n",half,stride);
+      printf("\n# stride between partners: %d\n",stride);
+      printf("# ping-pongs | count (longs) | max time (s) | bandwidth (GiB/s) | rate (msgs/s)\n");
       fflush(stdout);
     }
 
@@ -147,7 +153,7 @@ int main(int argc, char **argv)
       if (rank == 0) {
         const double bw = 2.0*double(end)*double(sizeof(long))/(elapsed*gb);
         const double rate = 2.0*double(parts)/elapsed;
-        printf("%d ping-pongs of %d longs: %g seconds, %g GB/s, %g message/s\n",parts,count,elapsed,bw,rate);
+        printf("%d %d %g %g %g\n",parts,count,elapsed,bw,rate);
         fflush(stdout);
       }
 
@@ -157,7 +163,10 @@ int main(int argc, char **argv)
       } else {
         for (int i = 0; i < end; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,i);
       }
-      if (elapsed > timeout) break;
+      if (elapsed > timeout) {
+        if (rank == 0) printf("\n");
+        break;
+      }
     }
   }
   MPI_Finalize();
