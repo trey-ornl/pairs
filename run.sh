@@ -7,5 +7,4 @@ TASKS=$1
 shift
 NODES=$1
 shift
-THREADS=$(( 128 * NODES / TASKS ))
-srun -n $TASKS -N $NODES -p bardpeak -c $THREADS -t 5:00 ./pairs $@ 
+flux run -n $TASKS -N $NODES -x -g 1 --queue=hpe_only -t 5m ./pairs $@ 

@@ -85,7 +85,10 @@ int main(int argc, char **argv)
 
   for (int parts = 1; parts < n; parts += parts) {
 
-    if (mem == 'd') hipMemset(pong,0,bytes);
+    if (mem == 'd') {
+      hipMemset(pong,0,bytes);
+      hipDeviceSynchronize();
+    }
     else memset(pong,0,bytes);
 
     const int count = n/parts;
@@ -116,9 +119,9 @@ int main(int argc, char **argv)
 
     if (mem == 'd') {
       hipMemcpy(hpong,pong,bytes,hipMemcpyDeviceToHost);
-      for (int i = 0; i < end; i++) if (hping[i] != hpong[i]) MPI_Abort(MPI_COMM_WORLD,rank);
+      for (int i = 0; i < end; i++) if (hping[i] != hpong[i]) MPI_Abort(MPI_COMM_WORLD,i);
     } else {
-      for (int i = 0; i < end; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,rank);
+      for (int i = 0; i < end; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,i);
     }
     if (elapsed > timeout) break;
   }
