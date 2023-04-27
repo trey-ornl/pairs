@@ -30,6 +30,7 @@ int main(int argc, char **argv)
 
   int n = 128*1024*1024;
   char mem = '0';
+  int misalign = 0;
   if (rank == 0) {
     if (argc > 1) {
       int in = 0;
@@ -37,15 +38,21 @@ int main(int argc, char **argv)
       if (in > 0) n = in;
     }
     if (argc > 2) mem = argv[2][0];
+    if (argc > 3) {
+      int in = 0;
+      sscanf(argv[3],"%d",&in);
+      if (in > 0) misalign = in;
+    }
   }
   MPI_Bcast(&n,1,MPI_INT,0,MPI_COMM_WORLD);
   MPI_Bcast(&mem,1,MPI_CHAR,0,MPI_COMM_WORLD);
-  const size_t bytes = size_t(n)*sizeof(long);
+  MPI_Bcast(&misalign,1,MPI_INT,0,MPI_COMM_WORLD);
+  size_t bytes = size_t(n)*sizeof(long);
   if (rank == 0) {
     if (mem == 'd') printf("Using hipMalloc");
     else if (mem == 'h') printf("Using hipHostMalloc");
     else printf("Using malloc");
-    printf(" with %d longs, %lu bytes, %d pairs\n",n,bytes,half);
+    printf(" with %d longs, %lu bytes misaligned by %lu, %d pairs\n",n,bytes,misalign*sizeof(long),half);
     fflush(stdout);
   }
 
@@ -53,22 +60,31 @@ int main(int argc, char **argv)
   long *hpong = nullptr;
   long *ping = nullptr;
   long *pong = nullptr;
+  const int extra = misalign*sizeof(long);
   if (mem == 'd') {
-    CHECK(hipHostMalloc(&hping,bytes));
-    CHECK(hipHostMalloc(&hpong,bytes));
-    CHECK(hipMalloc(&ping,bytes));
-    CHECK(hipMalloc(&pong,bytes));
+    CHECK(hipHostMalloc(&hping,bytes+extra));
+    hping += misalign;
+    CHECK(hipHostMalloc(&hpong,bytes+extra));
+    hpong += misalign;
+    CHECK(hipMalloc(&ping,bytes+extra));
+    ping += misalign;
+    CHECK(hipMalloc(&pong,bytes+extra));
+    pong += misalign;
     for (int i = 0; i < n; i ++) hping[i] = i;
     CHECK(hipMemset(pong,0,bytes));
     CHECK(hipMemcpy(ping,hping,bytes,hipMemcpyHostToDevice));
     memset(hpong,0,bytes);
   } else {
     if (mem == 'h') {
-      CHECK(hipHostMalloc(&ping,bytes));
-      CHECK(hipHostMalloc(&pong,bytes));
+      CHECK(hipHostMalloc(&ping,bytes+extra));
+      ping += misalign;
+      CHECK(hipHostMalloc(&pong,bytes+extra));
+      pong += misalign;
     } else {
-      ping = reinterpret_cast<long*>(malloc(bytes));
-      pong = reinterpret_cast<long*>(malloc(bytes));
+      ping = reinterpret_cast<long*>(malloc(bytes+extra));
+      ping += misalign;
+      pong = reinterpret_cast<long*>(malloc(bytes+extra));
+      pong += misalign;
     }
     for (int i = 0; i < n; i++) ping[i] = i;
     memset(pong,0,bytes);
