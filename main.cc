@@ -42,40 +42,45 @@ int main(int argc, char **argv)
     fflush(stdout);
   }
 
+  MPI_Request req;
+
+  MPI_Irecv(pong,n,MPI_LONG,partner,tag,MPI_COMM_WORLD,&req);
   if (lower) {
     MPI_Send(ping,n,MPI_LONG,partner,tag,MPI_COMM_WORLD);
-    MPI_Recv(pong,n,MPI_LONG,partner,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+    MPI_Wait(&req,MPI_STATUS_IGNORE);
   } else {
-    MPI_Recv(pong,n,MPI_LONG,partner,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+    MPI_Wait(&req,MPI_STATUS_IGNORE);
     MPI_Send(pong,n,MPI_LONG,partner,tag,MPI_COMM_WORLD);
   }
 
   for (int parts = 1; parts < n; parts += parts) {
     memset(pong,0,bytes);
+    const int count = n/parts;
+    const int end = parts*count;
+    if (!lower) MPI_Irecv(pong,count,MPI_LONG,partner,tag,MPI_COMM_WORLD,&req);
     MPI_Barrier(MPI_COMM_WORLD);
     const double before = MPI_Wtime();
-    const int count = n/parts;
-    for (int p = 0; p < parts; p++) {
-      const int offset = p*count;
+    for (int offset = 0; offset < end; offset += count) {
       if (lower) {
+        MPI_Irecv(pong+offset,count,MPI_LONG,partner,tag,MPI_COMM_WORLD,&req);
         MPI_Send(ping+offset,count,MPI_LONG,partner,tag,MPI_COMM_WORLD);
-        MPI_Recv(pong+offset,count,MPI_LONG,partner,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+        MPI_Wait(&req,MPI_STATUS_IGNORE);
       } else {
-        MPI_Recv(pong+offset,count,MPI_LONG,partner,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+        MPI_Wait(&req,MPI_STATUS_IGNORE);
+        if (offset+count < end) MPI_Irecv(pong+offset+count,count,MPI_LONG,partner,tag,MPI_COMM_WORLD,&req);
         MPI_Send(pong+offset,count,MPI_LONG,partner,tag,MPI_COMM_WORLD);
       }
     }
     const double delta = MPI_Wtime()-before;
     double elapsed = 0;
     MPI_Allreduce(&delta,&elapsed,1,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
-    const int pc = parts*count;
     if (rank == 0) {
-      const double bw = 2.0*double(pc)*double(sizeof(long))/(elapsed*gb);
+      const double bw = 2.0*double(end)*double(sizeof(long))/(elapsed*gb);
       const double rate = 2.0*double(parts)/elapsed;
       printf("%d ping-pongs of %d longs: %g seconds, %g GB/s, %g message/s\n",parts,count,elapsed,bw,rate);
       fflush(stdout);
     }
-    for (int i = 0; i < pc; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,rank);
+    for (int i = 0; i < end; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,rank);
     if (elapsed > timeout) break;
   }
   MPI_Finalize();
