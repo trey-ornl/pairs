@@ -110,7 +110,7 @@ int main(int argc, char **argv)
     assert(partner != rank);
     if (rank == 0) {
       printf("\n# stride between partners: %d\n",stride);
-      printf("# ping-pongs | count (longs) | max time (s) | bandwidth (GiB/s) | rate (msgs/s)\n");
+      printf("# ping-pongs | count (longs) | max avg min time (s) | min avg max bandwidth (GiB/s) | min avg max rate (msgs/s)\n");
       fflush(stdout);
     }
 
@@ -148,12 +148,17 @@ int main(int argc, char **argv)
         }
       }
       const double delta = MPI_Wtime()-before;
-      double elapsed = 0;
-      MPI_Allreduce(&delta,&elapsed,1,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
+      double dmax = 0;
+      MPI_Allreduce(&delta,&dmax,1,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
+      double dmin = dmax;
+      MPI_Reduce(&delta,&dmin,1,MPI_DOUBLE,MPI_MIN,0,MPI_COMM_WORLD);
+      double dsum = 0;
+      MPI_Reduce(&delta,&dsum,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
       if (rank == 0) {
-        const double bw = 2.0*double(end)*double(sizeof(long))/(elapsed*gb);
-        const double rate = 2.0*double(parts)/elapsed;
-        printf("%d %d %g %g %g\n",parts,count,elapsed,bw,rate);
+        const double davg = dsum/double(size);
+        const double bw = 2.0*double(end)*double(sizeof(long))/gb;
+        const double rate = 2.0*double(parts);
+        printf("%d %d %g %g %g %g %g %g %g %g %g\n",parts,count,dmax,davg,dmin,bw/dmax,bw/davg,bw/dmin,rate/dmax,rate/davg,rate/dmin);
         fflush(stdout);
       }
 
@@ -163,7 +168,7 @@ int main(int argc, char **argv)
       } else {
         for (int i = 0; i < end; i++) if (ping[i] != pong[i]) MPI_Abort(MPI_COMM_WORLD,i);
       }
-      if (elapsed > timeout) {
+      if (dmax > timeout) {
         if (rank == 0) printf("\n");
         break;
       }
