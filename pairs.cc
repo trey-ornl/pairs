@@ -110,7 +110,7 @@ int main(int argc, char **argv)
     assert(partner != rank);
     if (rank == 0) {
       printf("\n# stride between partners: %d\n",stride);
-      printf("# ping-pongs | count (longs) | max avg min time (s) | min avg max bandwidth (GiB/s) | min avg max rate (msgs/s)\n");
+      printf("# ping-pongs | count (longs) | max avg min time/msg/pair (us) | min avg max bandwidth (GiB/s) | min avg max rate (msgs/s)\n");
       fflush(stdout);
     }
 
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
       MPI_Send(pong,n,MPI_LONG,partner,tag,MPI_COMM_WORLD);
     }
 
-    for (int parts = 1; parts < n; parts += parts) {
+    for (int parts = 1; parts <= n; parts += parts) {
 
       if (mem == 'd') {
         CHECK(hipMemset(pong,0,bytes));
@@ -156,9 +156,10 @@ int main(int argc, char **argv)
       MPI_Reduce(&delta,&dsum,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
       if (rank == 0) {
         const double davg = dsum/double(size);
+        const double us = 0.5e6/double(parts);
         const double bw = 2.0*double(end)*double(sizeof(long))/gb;
         const double rate = 2.0*double(parts);
-        printf("%d %d %g %g %g %g %g %g %g %g %g\n",parts,count,dmax,davg,dmin,bw/dmax,bw/davg,bw/dmin,rate/dmax,rate/davg,rate/dmin);
+        printf("%d %d %g %g %g %g %g %g %g %g %g\n",parts,count,dmax*us,davg*us,dmin*us,bw/dmax,bw/davg,bw/dmin,rate/dmax,rate/davg,rate/dmin);
         fflush(stdout);
       }
 
