@@ -1,8 +1,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <hip/hip_runtime.h>
+#include <iostream>
 #include <mpi.h>
+#include <sched.h>
+#include <sstream>
+#include <sys/types.h>
+#include <unistd.h>
 
 void checkHip(const hipError_t err, const char *const file, const int line)
 {
@@ -48,17 +54,82 @@ int main(int argc, char **argv)
   MPI_Bcast(&mem,1,MPI_CHAR,0,MPI_COMM_WORLD);
   MPI_Bcast(&misalign,1,MPI_INT,0,MPI_COMM_WORLD);
   size_t bytes = size_t(n)*sizeof(long);
+
+  if (rank == 0) printf("# %s: strided parallel pairs of MPI ping-pong partners\n",argv[0]);
+
+  const int tag = 1;
+  MPI_Request req;
+
+  {
+    if (rank == 0) printf("# rank: host cores device(closest cores)\n");
+
+    std::stringstream binding;
+    binding << "# " << rank << ": ";
+
+    char proc[MPI_MAX_PROCESSOR_NAME];
+    int length = 0;
+    MPI_Get_processor_name(proc, &length);
+    binding << proc << ' ';
+
+    cpu_set_t set;
+    sched_getaffinity(0,sizeof(set),&set);
+    bool first = true;
+    for (int j = 0; j < CPU_SETSIZE; j++) {
+      if (CPU_ISSET(j,&set)) {
+        if (first) first = false;
+        else binding << ',';
+        binding << j;
+        const int jLo = j+2;
+        for (j++; (j < CPU_SETSIZE) && CPU_ISSET(j,&set); j++);
+        if (j > jLo) binding << '-' << (j-1);
+        else if (j == jLo) binding << ',' << (j-1);
+      }
+    }
+
+    int device;
+    CHECK(hipGetDevice(&device));
+    hipDeviceProp_t props;
+    CHECK(hipGetDeviceProperties(&props,device));
+    binding << ' ' << props.pciBusID;
+    char pci[] = "0000:00:00.0";
+    snprintf(pci,sizeof(pci),"%04x:%02x:%02x.0",props.pciDomainID,props.pciBusID,props.pciDeviceID);
+    std::string closest;
+    std::ifstream(std::string("/sys/bus/pci/devices/")+pci+"/local_cpulist") >> closest;
+    binding << '(' << closest << ')';
+
+    const int mylen = binding.str().size()+1;
+    int maxlen = 0;
+    MPI_Reduce(&mylen,&maxlen,1,MPI_INT,MPI_MAX,0,MPI_COMM_WORLD);
+    if (rank == 0) {
+      printf("%s\n",binding.str().c_str());
+      char *const line = new char[maxlen];
+      for (int i = 1; i < size; i++) {
+        MPI_Irecv(line,maxlen,MPI_CHAR,i,tag,MPI_COMM_WORLD,&req);
+        MPI_Send(0,0,MPI_CHAR,i,tag,MPI_COMM_WORLD);
+        MPI_Wait(&req,MPI_STATUS_IGNORE);
+        printf("%s\n",line);
+      }
+      fflush(stdout);
+      delete [] line;
+    } else {
+      MPI_Recv(0,0,MPI_CHAR,0,tag,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+      MPI_Send(binding.str().c_str(),mylen,MPI_CHAR,0,tag,MPI_COMM_WORLD);
+    }
+  }
+
   if (rank == 0) {
-    printf("# %s: strided parallel pairs of MPI ping-pong partners\n",argv[0]);
     printf("# allocator: ");
     if (mem == 'd') printf("hipMalloc\n");
     else if (mem == 'h') printf("hipHostMalloc\n");
     else printf("malloc\n");
     printf("# pairs: %d\n",half);
-    printf("# total count: %d bytes: %lu\n",n,bytes);
+    printf("# total count: %d longs (%g MiB)\n",n,double(bytes)/(1024.0*1024.0));
     if (misalign) printf("# misaligned by %lu bytes\n",misalign*sizeof(long));
     fflush(stdout);
   }
+
+  const double timeout = 1;
+  if (rank == 0) printf("# timeout: %gs\n",timeout);
 
   long *hping = nullptr;
   long *hpong = nullptr;
@@ -93,13 +164,6 @@ int main(int argc, char **argv)
     for (int i = 0; i < n; i++) ping[i] = i;
     memset(pong,0,bytes);
   }
-
-  const int tag = 1;
-  const double gb = double(1024)*double(1024)*double(1024);
-  const double timeout = 1;
-  if (rank == 0) printf("# timeout: %gs\n",timeout);
-
-  MPI_Request req;
 
   for (int stride = half; stride > 0; stride--) if (size%(2*stride) == 0) {
 
@@ -157,7 +221,7 @@ int main(int argc, char **argv)
       if (rank == 0) {
         const double davg = dsum/double(size);
         const double us = 0.5e6/double(parts);
-        const double bw = 2.0*double(end)*double(sizeof(long))/gb;
+        const double bw = 2.0*double(end)*double(sizeof(long))/(1024.0*1024.0*1024.0);
         const double rate = 2.0*double(parts);
         printf("%d %d %g %g %g %g %g %g %g %g %g\n",parts,count,dmax*us,davg*us,dmin*us,bw/dmax,bw/davg,bw/dmin,rate/dmax,rate/davg,rate/dmin);
         fflush(stdout);
