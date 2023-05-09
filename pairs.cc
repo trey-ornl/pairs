@@ -121,6 +121,7 @@ int main(int argc, char **argv)
     printf("# allocator: ");
     if (mem == 'd') printf("hipMalloc\n");
     else if (mem == 'h') printf("hipHostMalloc\n");
+    else if (mem == 'a') printf("posix_memalign\n");
     else printf("malloc\n");
     printf("# pairs: %d\n",half);
     printf("# total count: %d longs (%g MiB)\n",n,double(bytes)/(1024.0*1024.0));
@@ -154,6 +155,12 @@ int main(int argc, char **argv)
       CHECK(hipHostMalloc(&ping,bytes+extra));
       ping += misalign;
       CHECK(hipHostMalloc(&pong,bytes+extra));
+      pong += misalign;
+    } else if (mem == 'a') {
+      const size_t alignment = 4096;
+      posix_memalign((void**)&ping,alignment,bytes+extra);
+      ping += misalign;
+      posix_memalign((void**)&pong,alignment,bytes+extra);
       pong += misalign;
     } else {
       ping = reinterpret_cast<long*>(malloc(bytes+extra));
